@@ -1,108 +1,98 @@
 --[[                                                                                                                                                                            
---------------------------------------------------------
----------------Anti-VPN script by Overlord--------------
---------------------------------------------------------
+-----------------------------------------------------------------------------------------
+---------------Anti-VPN script created by Overlord and tweaked by thealex-br--------------
+-----------------------------------------------------------------------------------------
 Commands available: /checkVPN (case insensitive)
 --]]
 
-local o_avpn = {}
-
-----------------------------Can be changed----------------------------
---Set to true to check all the connected players on the resource start
-o_avpn.onStartCheckup = true 
-
-o_avpn.avoided = {
-	"127.0.0.1",	--Add here the IP's that you want to avoid checking
+local WHITELISTED_IPS = {
+	["127.0.0.1"] = true,
 }
------------------------------------------------------------------------
 
+local CACHED_IPS = {}
 
-addEventHandler("onResourceStart", resourceRoot, function()
-	outputDebugString("Anti-VPN by Overord started.")
+function getPlayerFromPartialName(name)
+    local name = name and name:gsub("#%x%x%x%x%x%x", ""):lower() or nil
+    if name then
+		local players = getElementsByType("player")
+        for i, player in ipairs(players) do
+            local name_ = getPlayerName(player):gsub("#%x%x%x%x%x%x", ""):lower()
+            if name_:find(name, 1, true) then
+                return player
+            end
+        end
+    end
+	return false
+end
 
-	if o_avpn.onStartCheckup then
-		for i, player in ipairs(getElementsByType("player")) do
-			setTimer(function() o_avpn.check(player) end, i*100, 1)
-		end
-	end
-end)
-
-function o_avpn.check(player, requester)
-	assert(getElementType(player)=="player", "VPN ERROR: No players were supplied")	
-	local playerIP = getPlayerIP(player)
+local function checkIfPlayerIsUsingVPN(player, requester)
+	assert(isElement(player) and getElementType(player) == "player", "Expected player at argument 1, got "..(isElement(player) and getElementType(player) or type(player)))
 	
-	for _, ip in ipairs(o_avpn.avoided) do
-		if ip == playerIP then outputDebugString("IP avoided.", 2) return false end
+	local IP = getPlayerIP(player)
+	if WHITELISTED_IPS[IP] then
+		if isElement(requester) then 
+			outputChatBox(getPlayerName(player).."'s IP is whitelisted", requester, 255, 0, 0)
+		end	
+		return false
 	end
 	
-	fetchRemote("http://proxy.mind-media.com/block/proxycheck.php?ip="..playerIP, function(rdata, err)
-		if err == 0 then
-			if rdata == "Y" then
-				if requester then 
-					outputChatBox("The test results for the player "..getPlayerName(player).." #FFFFFFare #FF0000Positive. #FFFFFFThe player appears to be using a VPN.", requester, 255, 255, 255, true)
-				else
-					if string.lower(get("vpnwarn")) == "true" then
-						outputDebugString("Player "..getPlayerName(player).." is using VPN.", 2)
-						for _, adm in ipairs(getElementsByType("player")) do
-							local admAcc = getPlayerAccount(adm)
-							if not isGuestAccount(admAcc) and isObjectInACLGroup("user."..getAccountName(admAcc), aclGetGroup(get("vpnacl"))) then
-								outputChatBox("Player "..getPlayerName(player).." is using VPN.", adm)
-							end
-						end
-					end
-					if string.lower(get("vpnkick")) == "true" then
-						outputDebugString("Player "..getPlayerName(player).." has been kicked.")
-						kickPlayer(player, "VPN Detected.")
-					end
-				end
-			elseif rdata == "N" then
-				if requester then 
-					outputChatBox("The test results for the player "..getPlayerName(player).." #FFFFFFare #00FF00Negative. #FFFFFFThe player appears NOT to be using a VPN.", requester, 255, 255, 255, true)
-				end
-			elseif rdata == "X" then
-				if requester then 
-					outputChatBox("Something wrong with the player's IP player "..getPlayerName(player).." #FFFFFFIP: #00FF00"..playerIP, requester, 255, 255, 255, true)
-				elseif string.lower(get("vpnwarn")) == "true" then
-					for _, adm in ipairs(getElementsByType("player")) do
-						local admAcc = getPlayerAccount(adm)
-						if not isGuestAccount(admAcc) and isObjectInACLGroup("user."..getAccountName(admAcc), aclGetGroup(get("vpnacl"))) then
-							outputChatBox("Something wrong with the player's IP player "..getPlayerName(player).." #FFFFFFIP: #00FF00"..playerIP, adm, 255, 255, 255, true)
-						end
-					end
-				end
-			else
-				outputDebugString("UNKNOWN RESPONSE.. "..rdata, 1)
-			end
-		else
-			if requester then 
-				outputChatBox("[Anti-VPN]: Error while connecting to the server", requester)
-			else
-				outputDebugString("Connection Error while checking the player "..getPlayerName(player), 2)
+	fetchRemote("https://proxy.mind-media.com/block/proxycheck.php?ip="..IP, function(data, err)
+		if err ~= 0 then
+			if isElement(requester) then 
+				outputChatBox("Error while connecting to the server", requester, 255, 0, 0)
 			end	
+			return
+		end
+
+		if data == "Y" then
+			kickPlayer(player, "VPN Detected.")
+			if not CACHED_IPS[IP] then
+				CACHED_IPS[IP] = true
+			end
+			if isElement(requester) then
+				outputChatBox(getPlayerName(player).." appears to be using a VPN.", requester, 255, 0, 0)
+			end
+		end
+		if data == "N" and isElement(requester) then
+			outputChatBox(getPlayerName(player).." appears NOT to be using a VPN.", requester, 0, 255, 0)
+		end
+		if data == "X" and isElement(requester) then 
+			outputChatBox("Something is wrong with "..getPlayerName(player).."'s IP.", requester, 255, 0, 0)
 		end
 	end)
 	return true
 end
-addEventHandler("onPlayerJoin", root, function()
-	o_avpn.check(source, false)
+
+addEventHandler("onPlayerConnect", root, function(_, IP)
+	if CACHED_IPS[IP] then
+		cancelEvent(true, "VPN Detected.")
+	end
 end)
 
-addCommandHandler("checkVPN", function(cmder, cmd, playerName)
+addEventHandler("onPlayerJoin", root, function()
+	checkIfPlayerIsUsingVPN(source, false)
+end)
+
+addEventHandler("onResourceStart", resourceRoot, function()
+	local players = getElementsByType("player")
+	for i, player in ipairs(players) do
+		setTimer(checkIfPlayerIsUsingVPN, i * 100, 1, player)
+	end
+end)
+
+addCommandHandler("checkVPN", function(cmder, cmd, target)
 	local cmderAcc = getPlayerAccount(cmder)
-	if not isGuestAccount(cmderAcc) and isObjectInACLGroup("user."..getAccountName(cmderAcc), aclGetGroup(get("vpnacl"))) then
-		if type(playerName) ~= "string" then
-			outputChatBox("[Anti-VPN]: currect usage: /checkVPN [player's name]", cmder, 230, 50, 0)
-			return false
+	if not isGuestAccount(cmderAcc) and isObjectInACLGroup("user."..getAccountName(cmderAcc), aclGetGroup("Admin")) then
+		if type(target) ~= "string" then
+			return outputChatBox("/checkVPN <player's name>", cmder, 255, 0, 0)
 		end
 		
-		local player = getPlayerFromName(playerName)
-		if isElement(player) and getElementType(player) == "player" then
-			return o_avpn.check(player, cmder)
-		else
-			outputChatBox("[Anti-VPN]: Couldn't find such player.", cmder, 230, 50, 0)
-			return false
+		local player = getPlayerFromPartialName(target)
+		if not player then
+			return outputChatBox("Couldn't find such player.", cmder, 255, 0, 0)
 		end
+		checkIfPlayerIsUsingVPN(player, cmder)
 	else
-		outputDebugString("WARNING: Player "..getPlayerName(cmder).." has tried to use /checkVPN", 2)
+		outputDebugString("WARNING: "..getPlayerName(cmder).." has tried to use /checkVPN", 4, 255, 0, 0)
 	end
 end, false, false)
